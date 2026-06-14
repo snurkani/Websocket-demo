@@ -1,0 +1,597 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LiveTrade — WebSocket Borsa Demo</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=DM+Mono:wght@300;400;500&family=Bebas+Neue&family=DM+Sans:wght@300;400;500;700&display=swap');
+
+  :root {
+    --bg:      #080c10;
+    --surface: #0e1318;
+    --border:  rgba(255,255,255,0.07);
+    --up:      #00e5a0;
+    --down:    #ff4060;
+    --flat:    #6b7a8d;
+    --text:    #dce8f0;
+    --muted:   #4a5568;
+    --gold:    #f5c842;
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'DM Sans', sans-serif;
+    min-height: 100vh;
+    padding: 0;
+  }
+
+  /* ── TOP BAR ── */
+  header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 18px 32px;
+    border-bottom: 1px solid var(--border);
+    background: rgba(8,12,16,0.95);
+    position: sticky; top: 0;
+    z-index: 50;
+    backdrop-filter: blur(10px);
+  }
+
+  .logo {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.7rem;
+    letter-spacing: 3px;
+    color: #fff;
+  }
+
+  .logo span { color: var(--up); }
+
+  .status-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.75rem;
+    color: var(--muted);
+    background: var(--surface);
+    padding: 8px 16px;
+    border-radius: 40px;
+    border: 1px solid var(--border);
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    transition: background 0.3s;
+  }
+  .status-dot.connected { background: var(--up); animation: pulse-dot 1.8s infinite; }
+  .status-dot.error     { background: var(--down); }
+
+  @keyframes pulse-dot {
+    0%,100% { box-shadow: 0 0 0 0 rgba(0,229,160,0.5); }
+    50%      { box-shadow: 0 0 0 6px rgba(0,229,160,0); }
+  }
+
+  #status-text { letter-spacing: 1px; }
+
+  .tick-counter {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+
+  /* ── MAIN ── */
+  main {
+    max-width: 1200px;
+    margin: 0 auto;
+    padding: 32px 24px;
+  }
+
+  /* ── CARDS GRID ── */
+  .cards-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 14px;
+    margin-bottom: 32px;
+  }
+
+  .stock-card {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    padding: 18px 20px;
+    cursor: default;
+    transition: border-color 0.25s, transform 0.15s;
+    position: relative;
+    overflow: hidden;
+  }
+
+  .stock-card::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    opacity: 0;
+    transition: opacity 0.4s;
+    pointer-events: none;
+  }
+
+  .stock-card.flash-up::before   { background: rgba(0,229,160,0.06); opacity: 1; }
+  .stock-card.flash-down::before { background: rgba(255,64,96,0.06);  opacity: 1; }
+
+  .stock-card:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.15); }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 12px;
+  }
+
+  .ticker {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.8rem;
+    font-weight: 500;
+    color: var(--gold);
+    letter-spacing: 2px;
+  }
+
+  .direction-arrow {
+    font-size: 1rem;
+    transition: all 0.2s;
+  }
+
+  .price {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 2rem;
+    letter-spacing: 1px;
+    color: #fff;
+    line-height: 1;
+    margin-bottom: 6px;
+    transition: color 0.3s;
+  }
+
+  .change-row {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+  }
+
+  .change-abs, .change-pct {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 500;
+  }
+
+  .up   { color: var(--up);   background: rgba(0,229,160,0.1); }
+  .down { color: var(--down); background: rgba(255,64,96,0.1);  }
+  .flat { color: var(--flat); background: rgba(107,122,141,0.1); }
+
+  /* MINI SPARKLINE */
+  .sparkline-wrap {
+    margin-top: 14px;
+    height: 40px;
+  }
+
+  .sparkline-wrap svg { width: 100%; height: 100%; }
+
+  /* ── LOG PANEL ── */
+  .panel {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 14px;
+    overflow: hidden;
+  }
+
+  .panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+
+  .panel-title {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.72rem;
+    letter-spacing: 2px;
+    color: var(--muted);
+    text-transform: uppercase;
+  }
+
+  .log-count {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--muted);
+    background: rgba(255,255,255,0.04);
+    padding: 3px 10px;
+    border-radius: 20px;
+  }
+
+  #log {
+    height: 220px;
+    overflow-y: auto;
+    padding: 12px 0;
+    font-family: 'DM Mono', monospace;
+    font-size: 0.73rem;
+    scroll-behavior: smooth;
+  }
+
+  #log::-webkit-scrollbar { width: 4px; }
+  #log::-webkit-scrollbar-track { background: transparent; }
+  #log::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .log-entry {
+    display: grid;
+    grid-template-columns: 70px 70px 90px 90px 1fr;
+    gap: 0;
+    padding: 5px 20px;
+    border-bottom: 1px solid rgba(255,255,255,0.02);
+    animation: slideIn 0.2s ease;
+    align-items: center;
+  }
+
+  @keyframes slideIn {
+    from { opacity: 0; transform: translateX(-8px); }
+    to   { opacity: 1; transform: translateX(0); }
+  }
+
+  .log-entry:last-child { border-bottom: none; }
+
+  .log-time    { color: var(--muted); }
+  .log-ticker  { color: var(--gold); letter-spacing: 1px; }
+  .log-price   { color: #fff; }
+  .log-change  {}
+  .log-dir     { text-align: right; }
+
+  /* WebSocket frame info */
+  .ws-info {
+    display: flex;
+    gap: 24px;
+    padding: 14px 20px;
+    border-top: 1px solid var(--border);
+    font-family: 'DM Mono', monospace;
+    font-size: 0.68rem;
+    color: var(--muted);
+  }
+
+  .ws-info span { color: var(--up); }
+
+  /* ── BOTTOM STATS ── */
+  .stats-row {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 14px;
+    margin-top: 14px;
+  }
+
+  .stat-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 16px 20px;
+    text-align: center;
+  }
+
+  .stat-label {
+    font-family: 'DM Mono', monospace;
+    font-size: 0.65rem;
+    letter-spacing: 2px;
+    color: var(--muted);
+    margin-bottom: 8px;
+    text-transform: uppercase;
+  }
+
+  .stat-value {
+    font-family: 'Bebas Neue', sans-serif;
+    font-size: 1.6rem;
+    letter-spacing: 1px;
+    color: #fff;
+  }
+
+  .stat-value.green { color: var(--up); }
+  .stat-value.red   { color: var(--down); }
+
+  /* ── DISCONNECTED OVERLAY ── */
+  #overlay {
+    display: none;
+    position: fixed;
+    inset: 0;
+    background: rgba(8,12,16,0.85);
+    backdrop-filter: blur(6px);
+    z-index: 100;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 16px;
+  }
+
+  #overlay.show { display: flex; }
+
+  .overlay-icon { font-size: 3rem; }
+  .overlay-title { font-family: 'Bebas Neue'; font-size: 2rem; letter-spacing: 2px; color: var(--down); }
+  .overlay-sub { font-size: 0.85rem; color: var(--muted); font-family: 'DM Mono'; }
+
+  .retry-btn {
+    margin-top: 8px;
+    background: var(--up);
+    color: #000;
+    border: none;
+    padding: 10px 28px;
+    border-radius: 8px;
+    font-family: 'DM Sans';
+    font-weight: 700;
+    font-size: 0.9rem;
+    cursor: pointer;
+    transition: opacity 0.2s;
+  }
+  .retry-btn:hover { opacity: 0.8; }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">LIVE<span>TRADE</span></div>
+  <div class="status-badge">
+    <div class="status-dot" id="dot"></div>
+    <span id="status-text">BAĞLANIYOR...</span>
+  </div>
+  <div class="tick-counter">TICK #<span id="tick-count">0</span></div>
+</header>
+
+<main>
+  <div class="cards-grid" id="cards"></div>
+
+  <div class="panel">
+    <div class="panel-header">
+      <div class="panel-title">WebSocket Mesaj Akışı</div>
+      <div class="log-count" id="log-count">0 mesaj</div>
+    </div>
+    <div id="log"></div>
+    <div class="ws-info">
+      <div>PROTOKOL: <span>ws://</span></div>
+      <div>SUNUCU: <span>localhost:8765</span></div>
+      <div>FRAME: <span id="frame-size">—</span> byte</div>
+      <div>LATENCY: <span id="latency">—</span> ms</div>
+    </div>
+  </div>
+
+  <div class="stats-row">
+    <div class="stat-box">
+      <div class="stat-label">Toplam Tick</div>
+      <div class="stat-value" id="stat-ticks">0</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Yükselen</div>
+      <div class="stat-value green" id="stat-up">0</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Düşen</div>
+      <div class="stat-value red" id="stat-down">0</div>
+    </div>
+    <div class="stat-box">
+      <div class="stat-label">Bağlantı Süresi</div>
+      <div class="stat-value" id="stat-time">0s</div>
+    </div>
+  </div>
+</main>
+
+<!-- Disconnected overlay -->
+<div id="overlay">
+  <div class="overlay-icon">🔌</div>
+  <div class="overlay-title">Bağlantı Kesildi</div>
+  <div class="overlay-sub">WebSocket sunucusuna erişilemiyor</div>
+  <div class="overlay-sub" style="font-size:0.75rem;margin-top:4px;">python server.py komutunu çalıştırdığınızdan emin olun</div>
+  <button class="retry-btn" onclick="connect()">Yeniden Bağlan</button>
+</div>
+
+<script>
+  // ── STATE ──
+  let ws = null;
+  let tickCount = 0;
+  let logCount = 0;
+  let upCount = 0, downCount = 0;
+  let connectedAt = null;
+  let timerInterval = null;
+  const MAX_LOG = 80;
+
+  // ── INIT CARDS ──
+  const tickers = ["THYAO", "GARAN", "ASELS", "BIMAS", "SASA"];
+
+  function initCards() {
+    const grid = document.getElementById('cards');
+    grid.innerHTML = '';
+    tickers.forEach(t => {
+      grid.innerHTML += `
+        <div class="stock-card" id="card-${t}">
+          <div class="card-header">
+            <span class="ticker">${t}</span>
+            <span class="direction-arrow" id="arrow-${t}">—</span>
+          </div>
+          <div class="price" id="price-${t}">—</div>
+          <div class="change-row">
+            <span class="change-abs flat" id="change-abs-${t}">±0.00</span>
+            <span class="change-pct flat" id="change-pct-${t}">0.000%</span>
+          </div>
+          <div class="sparkline-wrap" id="spark-${t}"></div>
+        </div>`;
+    });
+  }
+
+  // ── SPARKLINE ──
+  function drawSparkline(ticker, history) {
+    const wrap = document.getElementById(`spark-${ticker}`);
+    if (!wrap || history.length < 2) return;
+
+    const W = wrap.clientWidth || 160;
+    const H = 40;
+    const min = Math.min(...history);
+    const max = Math.max(...history);
+    const range = max - min || 1;
+
+    const points = history.map((v, i) => {
+      const x = (i / (history.length - 1)) * W;
+      const y = H - ((v - min) / range) * (H - 4) - 2;
+      return `${x.toFixed(1)},${y.toFixed(1)}`;
+    }).join(' ');
+
+    const last = history[history.length - 1];
+    const first = history[0];
+    const color = last >= first ? '#00e5a0' : '#ff4060';
+
+    wrap.innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none">
+        <polyline points="${points}"
+          fill="none" stroke="${color}" stroke-width="1.5"
+          stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>`;
+  }
+
+  // ── UPDATE CARD ──
+  function updateCard(item) {
+    const { ticker, price, change, change_pct, direction, history } = item;
+
+    const priceEl   = document.getElementById(`price-${ticker}`);
+    const changeAbs = document.getElementById(`change-abs-${ticker}`);
+    const changePct = document.getElementById(`change-pct-${ticker}`);
+    const arrowEl   = document.getElementById(`arrow-${ticker}`);
+    const cardEl    = document.getElementById(`card-${ticker}`);
+
+    if (!priceEl) return;
+
+    priceEl.textContent = price.toFixed(2);
+
+    const cls = direction === 'up' ? 'up' : direction === 'down' ? 'down' : 'flat';
+    const sign = change >= 0 ? '+' : '';
+    const arrow = direction === 'up' ? '▲' : direction === 'down' ? '▼' : '—';
+
+    changeAbs.className = `change-abs ${cls}`;
+    changePct.className = `change-pct ${cls}`;
+    changeAbs.textContent = sign + change.toFixed(2);
+    changePct.textContent = sign + change_pct.toFixed(3) + '%';
+    arrowEl.textContent = arrow;
+    arrowEl.style.color = direction === 'up' ? 'var(--up)' : direction === 'down' ? 'var(--down)' : 'var(--flat)';
+
+    // Flash
+    cardEl.classList.remove('flash-up', 'flash-down');
+    void cardEl.offsetWidth;
+    cardEl.classList.add(direction === 'up' ? 'flash-up' : 'flash-down');
+    setTimeout(() => cardEl.classList.remove('flash-up', 'flash-down'), 500);
+
+    drawSparkline(ticker, history);
+  }
+
+  // ── LOG ROW ──
+  function addLog(item) {
+    const log = document.getElementById('log');
+    const cls = item.direction === 'up' ? 'up' : 'down';
+    const sign = item.change >= 0 ? '+' : '';
+    const arrow = item.direction === 'up' ? '▲' : '▼';
+
+    const row = document.createElement('div');
+    row.className = 'log-entry';
+    row.innerHTML = `
+      <span class="log-time">${item.timestamp}</span>
+      <span class="log-ticker">${item.ticker}</span>
+      <span class="log-price">${item.price.toFixed(2)}</span>
+      <span class="log-change ${cls}">${sign}${item.change.toFixed(2)}</span>
+      <span class="log-dir ${cls}">${arrow} ${sign}${item.change_pct.toFixed(3)}%</span>`;
+
+    log.prepend(row);
+
+    // Limit log entries
+    while (log.children.length > MAX_LOG) log.removeChild(log.lastChild);
+
+    logCount++;
+    document.getElementById('log-count').textContent = logCount + ' mesaj';
+  }
+
+  // ── WEBSOCKET ──
+  function connect() {
+    document.getElementById('overlay').classList.remove('show');
+    setStatus('connecting');
+
+    ws = new WebSocket('ws://localhost:8765');
+
+    ws.onopen = () => {
+      setStatus('connected');
+      connectedAt = Date.now();
+      timerInterval = setInterval(updateTimer, 1000);
+    };
+
+    ws.onmessage = (event) => {
+      const t0 = performance.now();
+      const msg = JSON.parse(event.data);
+      const latency = (performance.now() - t0).toFixed(1);
+
+      document.getElementById('frame-size').textContent = event.data.length;
+      document.getElementById('latency').textContent = latency;
+
+      if (msg.type === 'price_update' || msg.type === 'snapshot') {
+        tickCount++;
+        document.getElementById('tick-count').textContent = tickCount;
+        document.getElementById('stat-ticks').textContent = tickCount;
+
+        msg.data.forEach(item => {
+          updateCard(item);
+          if (msg.type === 'price_update') {
+            addLog(item);
+            if (item.direction === 'up') upCount++;
+            else downCount++;
+          }
+        });
+
+        document.getElementById('stat-up').textContent = upCount;
+        document.getElementById('stat-down').textContent = downCount;
+      }
+    };
+
+    ws.onerror = () => setStatus('error');
+
+    ws.onclose = () => {
+      setStatus('disconnected');
+      clearInterval(timerInterval);
+      setTimeout(() => {
+        document.getElementById('overlay').classList.add('show');
+      }, 1500);
+    };
+  }
+
+  function setStatus(state) {
+    const dot  = document.getElementById('dot');
+    const text = document.getElementById('status-text');
+    dot.className = 'status-dot';
+    if (state === 'connected') {
+      dot.classList.add('connected');
+      text.textContent = 'CANLI';
+      text.style.color = 'var(--up)';
+    } else if (state === 'error' || state === 'disconnected') {
+      dot.classList.add('error');
+      text.textContent = 'BAĞLANTI KESİLDİ';
+      text.style.color = 'var(--down)';
+    } else {
+      text.textContent = 'BAĞLANIYOR...';
+      text.style.color = '';
+    }
+  }
+
+  function updateTimer() {
+    if (!connectedAt) return;
+    const s = Math.floor((Date.now() - connectedAt) / 1000);
+    const m = Math.floor(s / 60);
+    document.getElementById('stat-time').textContent = m > 0 ? `${m}d ${s%60}s` : `${s}s`;
+  }
+
+  // ── START ──
+  initCards();
+  connect();
+</script>
+</body>
+</html>
